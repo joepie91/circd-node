@@ -67,3 +67,8 @@ Util =
 		for character in characters
 			string = string.replace(character, "\#{character}")
 		return string
+	
+	throwError: (name, message) ->
+		e = new Error(message);
+		e.name = name
+		throw e

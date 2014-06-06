@@ -5,3 +5,7 @@ class NicknameInUseException extends Error
 class NicknameNotInUseException extends Error
 	# Thrown when an existing nickname was expected, but the given nickname isn't actually in use.
 	name: "NicknameNotInUse"
+	
+class InvalidNicknameException extends Error
+	# Thrown when a specified nickname contains invalid characters.
+	name: "InvalidNickname"

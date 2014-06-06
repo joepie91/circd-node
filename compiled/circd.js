@@ -62,7 +62,8 @@ Client = (function() {
   Client.prototype.initialize = function() {
     this.process_map = {
       "USERHOST": [1, this.processUserhost],
-      "WHO": [1, this.processWho]
+      "WHO": [1, this.processWho],
+      "NICK": [1, this.processNickChange]
     };
     this.connection.on("data", this.onData);
     this.status = ClientStatus.lookingUp;
@@ -141,6 +142,8 @@ Client = (function() {
           } else {
             if (this.server.hasUser(segments[1])) {
               return this.sendError(433, segments[1], "Nickname already in use.");
+            } else if (!Util.isValidNickname(segments[1])) {
+              return this.sendError(432, segments[1], "Erroneous nickname.");
             } else {
               this.nickname = segments[1];
               return this.verifyRegistration();
@@ -302,11 +305,11 @@ Client = (function() {
       always_hash = false;
     }
     if (!this.server.hasUser(nickname)) {
-      throw new NicknameNotInUseException("The specified source nickname is not currently in use.");
+      Util.throwError("NicknameNotInUse", "The specified source nickname is not currently in use.");
     }
     user = this.server.getUser(nickname);
     ident = user.ident;
-    if (Util.toLowercaseIRC(nickname) === Util.toLowerCase(this.nickname) && always_hash === false) {
+    if (Util.toLowercaseIRC(nickname) === Util.toLowercaseIRC(this.nickname) && always_hash === false) {
       host = this.real_reverse;
     } else {
       host = user.reverse;
@@ -328,39 +331,44 @@ Client = (function() {
     new_nickname = segments[1];
     old_nickname = this.nickname;
     old_identity = this.getFullIdentity(old_nickname, true);
-    if (nickname === this.nickname) {
+    if (new_nickname === old_nickname) {
       return;
     } else {
       try {
         this.server.renameUser(old_nickname, new_nickname);
       } catch (_error) {
         err = _error;
-        if (err instanceof NicknameInUseException) {
-          return this.sendError(433, nickname, "Nickname is already in use.");
+        if (err.name === "NicknameInUseException") {
+          return this.sendError(433, new_nickname, "Nickname is already in use.");
         }
-        if (err instanceof NicknameNotInUseException) {
-          null;
+        if (err.name === "NicknameNotInUseException") {
+          return null;
         }
+        if (err.name === "InvalidNicknameException") {
+          return this.sendError(432, new_nickname, "Erroneous nickname.");
+        }
+        throw err;
       }
     }
-    return this.sendCommand("NICK :" + nickname, old_identity);
+    return this.sendCommand("NICK :" + new_nickname, old_identity);
   };
 
   Client.prototype.processUserhost = function(segments) {
-    var i, identity, nickname, nicknames, pads, remaining_slots, responses, _i, _j, _len;
+    var err, identity, nickname, nicknames, responses, _i, _len;
     nicknames = segments.slice(1);
     responses = [];
     for (_i = 0, _len = nicknames.length; _i < _len; _i++) {
       nickname = nicknames[_i];
-      identity = this.getIdentity(nickname);
-      responses.push("" + nickname + "=+" + identity);
-    }
-    remaining_slots = 5 - segments.length;
-    if (remaining_slots >= 2) {
-      pads = remaining_slots - 1;
-      for (i = _j = 0; 0 <= pads ? _j <= pads : _j >= pads; i = 0 <= pads ? ++_j : --_j) {
-        responses.push("");
+      try {
+        identity = this.getIdentity(nickname);
+      } catch (_error) {
+        err = _error;
+        if (err.name === "NicknameNotInUse") {
+          continue;
+        }
+        throw err;
       }
+      responses.push("" + nickname + "=+" + identity);
     }
     return this.sendNumeric("302", responses.join(" "));
   };
@@ -467,6 +475,9 @@ Server = (function() {
   };
 
   Server.prototype.setUser = function(nickname, user) {
+    if (!Util.isValidNickname(nickname)) {
+      Util.throwError("InvalidNickname", "The nickname contains invalid characters.");
+    }
     nickname = Util.toLowercaseIRC(nickname);
     return this.users[nickname] = user;
   };
@@ -477,13 +488,16 @@ Server = (function() {
   };
 
   Server.prototype.renameUser = function(old_nickname, new_nickname) {
+    if (!Util.isValidNickname(new_nickname)) {
+      Util.throwError("InvalidNickname", "The new nickname contains invalid characters.");
+    }
     old_nickname = Util.toLowercaseIRC(old_nickname);
     new_nickname = Util.toLowercaseIRC(new_nickname);
     if (!this.hasUser(old_nickname)) {
-      throw new NicknameNotInUseException("The specified source nickname is not currently in use.");
+      Util.throwError("NicknameNotInUse", "The specified source nickname is not currently in use.");
     }
     if (this.hasUser(new_nickname)) {
-      throw new NicknameInUseException("The specified target nickname is in use by another user.");
+      Util.throwError("NicknameInUse", "The specified target nickname is in use by another user.");
     }
     this.users[new_nickname] = this.users[old_nickname];
     return delete this.users[old_nickname];
@@ -618,6 +632,12 @@ Util = {
       string = string.replace(character, "\#{character}");
     }
     return string;
+  },
+  throwError: function(name, message) {
+    var e;
+    e = new Error(message);
+    e.name = name;
+    throw e;
   }
 };
 
@@ -629,7 +649,7 @@ server.bind(null, 6667);
 
 server.start();
 
-var NicknameInUseException, NicknameNotInUseException,
+var InvalidNicknameException, NicknameInUseException, NicknameNotInUseException,
   __hasProp = {}.hasOwnProperty,
   __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; };
 
@@ -656,6 +676,19 @@ NicknameNotInUseException = (function(_super) {
   NicknameNotInUseException.prototype.name = "NicknameNotInUse";
 
   return NicknameNotInUseException;
+
+})(Error);
+
+InvalidNicknameException = (function(_super) {
+  __extends(InvalidNicknameException, _super);
+
+  function InvalidNicknameException() {
+    return InvalidNicknameException.__super__.constructor.apply(this, arguments);
+  }
+
+  InvalidNicknameException.prototype.name = "InvalidNickname";
+
+  return InvalidNicknameException;
 
 })(Error);
 ; })();

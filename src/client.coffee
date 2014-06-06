@@ -19,6 +19,7 @@ class Client
 		@process_map = {
 			"USERHOST": [1, @processUserhost]
 			"WHO": [1, @processWho]
+			"NICK": [1, @processNickChange]
 		}
 		
 		@connection.on("data", @onData)
@@ -82,6 +83,8 @@ class Client
 					else
 						if @server.hasUser(segments[1])
 							@sendError(433, segments[1], "Nickname already in use.")
+						else if not Util.isValidNickname(segments[1])
+							return @sendError(432, segments[1], "Erroneous nickname.")
 						else
 							@nickname = segments[1]
 							@verifyRegistration()
@@ -193,13 +196,13 @@ class Client
 			
 	getIdentity: (nickname, always_hash = false) =>
 		if not @server.hasUser(nickname)
-			throw new NicknameNotInUseException("The specified source nickname is not currently in use.")
+			Util.throwError("NicknameNotInUse", "The specified source nickname is not currently in use.")
 		
 		user = @server.getUser(nickname)
 
 		ident = user.ident
 
-		if Util.toLowercaseIRC(nickname) == Util.toLowerCase(@nickname) and always_hash == false
+		if Util.toLowercaseIRC(nickname) == Util.toLowercaseIRC(@nickname) and always_hash == false
 			host = @real_reverse # This way the real host can *never* leak, even if somebody messes with the identity check
 		else
 			host = user.reverse
@@ -215,33 +218,35 @@ class Client
 		old_nickname = @nickname
 		old_identity = @getFullIdentity(old_nickname, true)
 		
-		if nickname == @nickname
+		if new_nickname == old_nickname
 			return
 		else
 			try
 				@server.renameUser(old_nickname, new_nickname)
 			catch err
-				if err instanceof NicknameInUseException
-					return @sendError(433, nickname, "Nickname is already in use.")
-				if err instanceof NicknameNotInUseException
-					null # FIXME: Log error, this is a bug!
+				if err.name == "NicknameInUseException"
+					return @sendError(433, new_nickname, "Nickname is already in use.")
+				if err.name == "NicknameNotInUseException"
+					return null # FIXME: Log error, this is a bug!
+				if err.name == "InvalidNicknameException"
+					return @sendError(432, new_nickname, "Erroneous nickname.")
+				throw err
 					
-		@sendCommand("NICK :#{nickname}", old_identity) # FIXME: Broadcast NICK change to all affected users! REQ: Channels
+		@sendCommand("NICK :#{new_nickname}", old_identity) # FIXME: Broadcast NICK change to all affected users! REQ: Channels
 	
 	processUserhost: (segments) =>
 		nicknames = segments.slice(1)
 		responses = []
 		
 		for nickname in nicknames
-			identity = @getIdentity(nickname)
+			try
+				identity = @getIdentity(nickname)
+			catch err
+				if err.name == "NicknameNotInUse"
+					continue
+				throw err
+				
 			responses.push("#{nickname}=+#{identity}")
-			
-		remaining_slots = 5 - segments.length
-		if remaining_slots >= 2
-			# Pad the response like UnrealIRCd does
-			pads = remaining_slots - 1
-			for i in [0..pads]
-				responses.push("")
 		
 		@sendNumeric("302", responses.join(" "))
 		

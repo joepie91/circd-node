@@ -49,6 +49,8 @@ class Server
 		return @users[nickname] ? null
 	
 	setUser: (nickname, user) =>
+		if not Util.isValidNickname(nickname)
+			Util.throwError("InvalidNickname", "The nickname contains invalid characters.")
 		nickname = Util.toLowercaseIRC(nickname)
 		@users[nickname] = user
 		
@@ -57,14 +59,17 @@ class Server
 		delete @users[nickname]
 		
 	renameUser: (old_nickname, new_nickname) =>
+		if not Util.isValidNickname(new_nickname)
+			Util.throwError("InvalidNickname", "The new nickname contains invalid characters.")
+			
 		old_nickname = Util.toLowercaseIRC(old_nickname)
 		new_nickname = Util.toLowercaseIRC(new_nickname)
 		
 		if not @hasUser(old_nickname)
-			throw new NicknameNotInUseException("The specified source nickname is not currently in use.")
+			Util.throwError("NicknameNotInUse", "The specified source nickname is not currently in use.")
 			
 		if @hasUser(new_nickname)
-			throw new NicknameInUseException("The specified target nickname is in use by another user.")
+			Util.throwError("NicknameInUse", "The specified target nickname is in use by another user.")
 		
 		@users[new_nickname] = @users[old_nickname]
 		delete @users[old_nickname]
