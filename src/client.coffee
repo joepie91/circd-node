@@ -49,7 +49,7 @@ class Client
 	onConnectionCompleted: =>
 		if @server.hasUser(@nickname)
 			# Race condition occurred, abort.
-			return @abortConnection("Nickname is already in use.") # FIXME
+			return @abortConnection("Nickname is already in use.")
 		@server.setUser(@nickname, this)
 		@sendWelcome()
 		@sendMOTD()
@@ -74,6 +74,7 @@ class Client
 					if segments.length < 5
 						@sendError(461, "USER", "Not enough parameters.")
 					else
+						# FIXME: User mode parsing!
 						@ident = segments[1]
 						@realname = segments[4]
 						@verifyRegistration()
@@ -212,6 +213,12 @@ class Client
 	getFullIdentity: (nickname, always_hash = false) =>
 		identity = @getIdentity(nickname, always_hash)
 		return "#{nickname}!#{identity}"
+	
+	forceChangeNick: (old_nickname, new_nickname) =>
+		null # TODO: @forceChangeNick
+		
+	abortConnection: (reason) =>
+		null # TODO: @abortConnection
 	
 	processNickChange: (segments) =>
 		new_nickname = segments[1]

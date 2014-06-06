@@ -31,6 +31,8 @@ Client = (function() {
     this.processWho = __bind(this.processWho, this);
     this.processUserhost = __bind(this.processUserhost, this);
     this.processNickChange = __bind(this.processNickChange, this);
+    this.abortConnection = __bind(this.abortConnection, this);
+    this.forceChangeNick = __bind(this.forceChangeNick, this);
     this.getFullIdentity = __bind(this.getFullIdentity, this);
     this.getIdentity = __bind(this.getIdentity, this);
     this.sendMOTD = __bind(this.sendMOTD, this);
@@ -324,6 +326,14 @@ Client = (function() {
     }
     identity = this.getIdentity(nickname, always_hash);
     return "" + nickname + "!" + identity;
+  };
+
+  Client.prototype.forceChangeNick = function(old_nickname, new_nickname) {
+    return null;
+  };
+
+  Client.prototype.abortConnection = function(reason) {
+    return null;
   };
 
   Client.prototype.processNickChange = function(segments) {
