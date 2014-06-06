@@ -1,5 +1,6 @@
 Util = 
 	nickname_regex: /[a-zA-Z\[\]\\`_^{|}][a-zA-Z0-9\[\]\\`_^{|}-]*/
+	regex_strip_carriage_return: /\r+$/
 	
 	parseMessage: (message) ->
 		# Strip the prefix, if it's present
@@ -23,6 +24,9 @@ Util =
 		
 	splitChannelNames: (names) ->
 		return names.split(",")
+	
+	splitLines: (string) ->
+		return (line.replace(Util.regex_strip_carriage_return, "") for line in string.split("\n"))
 		
 	isChannelName: (name) ->
 		return name.substring(0, 1) in ["&", "#", "+", "!"]
@@ -39,17 +43,17 @@ Util =
 	
 	toLowercaseIRC: (string) ->
 		###
-			http://tools.ietf.org/html/rfc2812#section-2.2
-			
-			"Because of IRC's Scandinavian origin, the characters {}|^ are
-			 considered to be the lower case equivalents of the characters []\~,
-			 respectively. This is a critical issue when determining the
-			 equivalence of two nicknames or channel names."
-			
-			Yeah, don't ask me. I don't understand either.
+		 http://tools.ietf.org/html/rfc2812#section-2.2
+		 
+		 "Because of IRC's Scandinavian origin, the characters {}|^ are
+		  considered to be the lower case equivalents of the characters []\~,
+		  respectively. This is a critical issue when determining the
+		  equivalence of two nicknames or channel names."
+
+		 Yeah, don't ask me. I don't understand either.
 		###
 		
-		return string.toLowercase().replace("[", "{").replace("]", "}").replace("\\", "|").replace("~", "^")
+		return string.toLowerCase().replace("[", "{").replace("]", "}").replace("\\", "|").replace("~", "^")
 	
 	filterByMask: (collection, mask, property = null) ->
 		escaped = Util.escapeCharacters(mask, ["\\", "^", "$", "{", "}", "[", "]", "(", ")", ".", "|", "+", "<", ">", "-", "&"])

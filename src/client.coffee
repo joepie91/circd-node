@@ -11,8 +11,6 @@ ClientStatus = {
 }
 
 class Client
-	regex_strip_carriage_return: /\r+$/
-		
 	constructor: (@server, @connection) ->
 		@status = ClientStatus.disconnected
 		@buffer = ""
@@ -48,21 +46,22 @@ class Client
 		@onConnectionCompleted()
 		
 	onConnectionCompleted: =>
-		if @nickname of @server.users
+		if Util.toLowercaseIRC(@nickname) of @server.users
 			# Race condition occurred, abort.
 			return @abortConnection("Nickname is already in use.") # FIXME
-		@server.users[@nickname] = this
+		@server.users[Util.toLowercaseIRC(@nickname)] = this
 		@sendWelcome()
+		@sendMOTD()
 		
 	onDisconnected: (reason) =>
 		# FIXME: Broadcast disconnect
-		delete @server.users[@nickname]
+		delete @server.users[Util.toLowercaseIRC(@nickname)]
 		
 	onData: (data) =>
 		@buffer += data
 		messages = @buffer.split("\n")
 		@buffer = messages.pop()
-		@onMessage(message.replace(@regex_strip_carriage_return, "")) for message in messages
+		@onMessage(message.replace(Util.regex_strip_carriage_return, "")) for message in messages
 		
 	onMessage: (message) =>
 		segments = Util.parseMessage(message)
@@ -81,11 +80,17 @@ class Client
 					if segments.length < 2
 						@sendError(461, "NICK", "Not enough parameters.")
 					else
-						if segments[1] of @server.users
+						if Util.toLowercaseIRC(segments[1]) of @server.users
 							@sendError(433, segments[1], "Nickname already in use.")
 						else
 							@nickname = segments[1]
 							@verifyRegistration()
+				when "PASS"
+					if segments.length < 2
+						@sendError(461, "NICK", "Not enough parameters.")
+					else
+						@server_password = segments[1]
+						@verifyRegistration()
 				when "PONG"
 					null # Ignore
 				else
@@ -120,6 +125,9 @@ class Client
 				
 	verifyRegistration: =>
 		if @ident? and @nickname?
+			if @server.password?
+				if @server.password != @server_password
+					return @sendError(464, null, "Password incorrect.")
 			@status = ClientStatus.registered
 			@sendChallenge()
 
@@ -147,8 +155,13 @@ class Client
 	sendGlobalNotice: (message) =>
 		@sendRaw(":#{@server.host} NOTICE #{message}")
 		
-	sendError: (numeric, command, message) =>
-		@sendNumeric(numeric, "#{command} :#{message}")
+	sendError: (numeric, argument, message) =>
+		# `argument` is the faulty input that the error applies to. This can be a
+		# command, nickname, etc.
+		if argument?
+			@sendNumeric(numeric, "#{argument} :#{message}")
+		else
+			@sendNumericNotice(numeric, message)
 		
 	sendChallenge: =>
 		q.nfcall(crypto.randomBytes, 6).then(
@@ -161,6 +174,16 @@ class Client
 		@sendNumericNotice("002", "Your host is #{@server.host}, running circd/0.0.1") # FIXME: Version!
 		@sendNumericNotice("003", "This server has been running since unknown.") # FIXME: Daemon start time
 		@sendNumericNotice("004", "#{@server.host} circd/0.0.1  ") # FIXME: Version and modes!
+		
+	sendMOTD: =>
+		if @server.motd
+			@sendNumericNotice(375, "- #{@server.host} Message of the day - ")
+			for line in Util.splitLines(@server.motd)
+				@sendNumericNotice(372, "- #{line}")
+			@sendNumericNotice(376, "End of MOTD command")
+		else
+			@sendNumericNotice(422, "MOTD File is missing")
+				
 		
 	getIdentity: (nickname) =>
 		ident = @ident # FIXME

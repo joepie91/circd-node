@@ -8,6 +8,8 @@ class Server
 		@channels = {}
 		@host = "localhost" # FIXME
 		@network = "Cryto IRC" # FIXME
+		@motd = "This is purely a testing MOTD." # FIXME
+		@password = null # FIXME
 		
 	bind: (bind_ip, port, tls = false, options = {}) =>
 		@bindings.push({

@@ -25,14 +25,13 @@ ClientStatus = {
 };
 
 Client = (function() {
-  Client.prototype.regex_strip_carriage_return = /\r+$/;
-
   function Client(server, connection) {
     this.server = server;
     this.connection = connection;
     this.processWho = __bind(this.processWho, this);
     this.processUserhost = __bind(this.processUserhost, this);
     this.getIdentity = __bind(this.getIdentity, this);
+    this.sendMOTD = __bind(this.sendMOTD, this);
     this.sendWelcome = __bind(this.sendWelcome, this);
     this.sendChallenge = __bind(this.sendChallenge, this);
     this.sendError = __bind(this.sendError, this);
@@ -93,15 +92,16 @@ Client = (function() {
   };
 
   Client.prototype.onConnectionCompleted = function() {
-    if (this.nickname in this.server.users) {
+    if (Util.toLowercaseIRC(this.nickname) in this.server.users) {
       return this.abortConnection("Nickname is already in use.");
     }
-    this.server.users[this.nickname] = this;
-    return this.sendWelcome();
+    this.server.users[Util.toLowercaseIRC(this.nickname)] = this;
+    this.sendWelcome();
+    return this.sendMOTD();
   };
 
   Client.prototype.onDisconnected = function(reason) {
-    return delete this.server.users[this.nickname];
+    return delete this.server.users[Util.toLowercaseIRC(this.nickname)];
   };
 
   Client.prototype.onData = function(data) {
@@ -112,7 +112,7 @@ Client = (function() {
     _results = [];
     for (_i = 0, _len = messages.length; _i < _len; _i++) {
       message = messages[_i];
-      _results.push(this.onMessage(message.replace(this.regex_strip_carriage_return, "")));
+      _results.push(this.onMessage(message.replace(Util.regex_strip_carriage_return, "")));
     }
     return _results;
   };
@@ -136,12 +136,20 @@ Client = (function() {
           if (segments.length < 2) {
             return this.sendError(461, "NICK", "Not enough parameters.");
           } else {
-            if (segments[1] in this.server.users) {
+            if (Util.toLowercaseIRC(segments[1]) in this.server.users) {
               return this.sendError(433, segments[1], "Nickname already in use.");
             } else {
               this.nickname = segments[1];
               return this.verifyRegistration();
             }
+          }
+          break;
+        case "PASS":
+          if (segments.length < 2) {
+            return this.sendError(461, "NICK", "Not enough parameters.");
+          } else {
+            this.server_password = segments[1];
+            return this.verifyRegistration();
           }
           break;
         case "PONG":
@@ -187,6 +195,11 @@ Client = (function() {
 
   Client.prototype.verifyRegistration = function() {
     if ((this.ident != null) && (this.nickname != null)) {
+      if (this.server.password != null) {
+        if (this.server.password !== this.server_password) {
+          return this.sendError(464, null, "Password incorrect.");
+        }
+      }
       this.status = ClientStatus.registered;
       return this.sendChallenge();
     }
@@ -224,8 +237,12 @@ Client = (function() {
     return this.sendRaw(":" + this.server.host + " NOTICE " + message);
   };
 
-  Client.prototype.sendError = function(numeric, command, message) {
-    return this.sendNumeric(numeric, "" + command + " :" + message);
+  Client.prototype.sendError = function(numeric, argument, message) {
+    if (argument != null) {
+      return this.sendNumeric(numeric, "" + argument + " :" + message);
+    } else {
+      return this.sendNumericNotice(numeric, message);
+    }
   };
 
   Client.prototype.sendChallenge = function() {
@@ -247,6 +264,21 @@ Client = (function() {
     this.sendNumericNotice("002", "Your host is " + this.server.host + ", running circd/0.0.1");
     this.sendNumericNotice("003", "This server has been running since unknown.");
     return this.sendNumericNotice("004", "" + this.server.host + " circd/0.0.1  ");
+  };
+
+  Client.prototype.sendMOTD = function() {
+    var line, _i, _len, _ref;
+    if (this.server.motd) {
+      this.sendNumericNotice(375, "- " + this.server.host + " Message of the day - ");
+      _ref = Util.splitLines(this.server.motd);
+      for (_i = 0, _len = _ref.length; _i < _len; _i++) {
+        line = _ref[_i];
+        this.sendNumericNotice(372, "- " + line);
+      }
+      return this.sendNumericNotice(376, "End of MOTD command");
+    } else {
+      return this.sendNumericNotice(422, "MOTD File is missing");
+    }
   };
 
   Client.prototype.getIdentity = function(nickname) {
@@ -306,6 +338,8 @@ Server = (function() {
     this.channels = {};
     this.host = "localhost";
     this.network = "Cryto IRC";
+    this.motd = "This is purely a testing MOTD.";
+    this.password = null;
   }
 
   Server.prototype.bind = function(bind_ip, port, tls, options) {
@@ -370,6 +404,7 @@ var Util;
 
 Util = {
   nickname_regex: /[a-zA-Z\[\]\\`_^{|}][a-zA-Z0-9\[\]\\`_^{|}-]*/,
+  regex_strip_carriage_return: /\r+$/,
   parseMessage: function(message) {
     var halves, segment, segments;
     if (message.substring(0, 1) === ":") {
@@ -405,6 +440,19 @@ Util = {
   splitChannelNames: function(names) {
     return names.split(",");
   },
+  splitLines: function(string) {
+    var line;
+    return (function() {
+      var _i, _len, _ref, _results;
+      _ref = string.split("\n");
+      _results = [];
+      for (_i = 0, _len = _ref.length; _i < _len; _i++) {
+        line = _ref[_i];
+        _results.push(line.replace(Util.regex_strip_carriage_return, ""));
+      }
+      return _results;
+    })();
+  },
   isChannelName: function(name) {
     var _ref;
     return (_ref = name.substring(0, 1)) === "&" || _ref === "#" || _ref === "+" || _ref === "!";
@@ -426,16 +474,16 @@ Util = {
   toLowercaseIRC: function(string) {
 
     /*
-    			http://tools.ietf.org/html/rfc2812#section-2.2
-    			
-    			"Because of IRC's Scandinavian origin, the characters {}|^ are
-    			 considered to be the lower case equivalents of the characters []\~,
-    			 respectively. This is a critical issue when determining the
-    			 equivalence of two nicknames or channel names."
-    			
-    			Yeah, don't ask me. I don't understand either.
+    		 http://tools.ietf.org/html/rfc2812#section-2.2
+    		 
+    		 "Because of IRC's Scandinavian origin, the characters {}|^ are
+    		  considered to be the lower case equivalents of the characters []\~,
+    		  respectively. This is a critical issue when determining the
+    		  equivalence of two nicknames or channel names."
+    
+    		 Yeah, don't ask me. I don't understand either.
      */
-    return string.toLowercase().replace("[", "{").replace("]", "}").replace("\\", "|").replace("~", "^");
+    return string.toLowerCase().replace("[", "{").replace("]", "}").replace("\\", "|").replace("~", "^");
   },
   filterByMask: function(collection, mask, property) {
     var escaped, item, re;
