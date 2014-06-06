@@ -30,6 +30,8 @@ Client = (function() {
     this.connection = connection;
     this.processWho = __bind(this.processWho, this);
     this.processUserhost = __bind(this.processUserhost, this);
+    this.processNickChange = __bind(this.processNickChange, this);
+    this.getFullIdentity = __bind(this.getFullIdentity, this);
     this.getIdentity = __bind(this.getIdentity, this);
     this.sendMOTD = __bind(this.sendMOTD, this);
     this.sendWelcome = __bind(this.sendWelcome, this);
@@ -40,6 +42,7 @@ Client = (function() {
     this.sendNumeric = __bind(this.sendNumeric, this);
     this.sendPong = __bind(this.sendPong, this);
     this.sendPing = __bind(this.sendPing, this);
+    this.sendCommand = __bind(this.sendCommand, this);
     this.sendRaw = __bind(this.sendRaw, this);
     this.maskHost = __bind(this.maskHost, this);
     this.maskIP = __bind(this.maskIP, this);
@@ -92,16 +95,16 @@ Client = (function() {
   };
 
   Client.prototype.onConnectionCompleted = function() {
-    if (Util.toLowercaseIRC(this.nickname) in this.server.users) {
+    if (this.server.hasUser(this.nickname)) {
       return this.abortConnection("Nickname is already in use.");
     }
-    this.server.users[Util.toLowercaseIRC(this.nickname)] = this;
+    this.server.setUser(this.nickname, this);
     this.sendWelcome();
     return this.sendMOTD();
   };
 
   Client.prototype.onDisconnected = function(reason) {
-    return delete this.server.users[Util.toLowercaseIRC(this.nickname)];
+    return this.server.deleteUser(this.nickname);
   };
 
   Client.prototype.onData = function(data) {
@@ -155,7 +158,11 @@ Client = (function() {
         case "PONG":
           return null;
         default:
-          return this.sendError(451, segments[0], "You have not registered.");
+          if (segments[0] in this.process_map) {
+            return this.sendError(451, segments[0], "You have not registered.");
+          } else {
+            return this.sendError(421, segments[0], "Unknown command");
+          }
       }
     } else if (this.status === ClientStatus.registered) {
       if (segments[0] === "PONG") {
@@ -217,6 +224,14 @@ Client = (function() {
     return this.connection.write(data + "\r\n");
   };
 
+  Client.prototype.sendCommand = function(data, source) {
+    if (source == null) {
+      source = null;
+    }
+    source = source != null ? source : this.server.host;
+    return this.sendRaw(":" + source + " " + data);
+  };
+
   Client.prototype.sendPing = function(value) {
     return this.sendRaw("PING :" + value);
   };
@@ -226,7 +241,7 @@ Client = (function() {
   };
 
   Client.prototype.sendNumeric = function(numeric, message) {
-    return this.sendRaw(":" + this.server.host + " " + numeric + " " + this.nickname + " " + message);
+    return this.sendCommand("" + numeric + " " + this.nickname + " " + message);
   };
 
   Client.prototype.sendNumericNotice = function(numeric, message) {
@@ -234,7 +249,7 @@ Client = (function() {
   };
 
   Client.prototype.sendGlobalNotice = function(message) {
-    return this.sendRaw(":" + this.server.host + " NOTICE " + message);
+    return this.sendCommand("NOTICE " + message);
   };
 
   Client.prototype.sendError = function(numeric, argument, message) {
@@ -281,15 +296,49 @@ Client = (function() {
     }
   };
 
-  Client.prototype.getIdentity = function(nickname) {
-    var host, ident;
-    ident = this.ident;
-    if (nickname === this.nickname) {
+  Client.prototype.getIdentity = function(nickname, always_hash) {
+    var host, ident, user;
+    if (always_hash == null) {
+      always_hash = false;
+    }
+    if (!(nickname in this.server.users)) {
+      throw new NicknameNotInUseException("The specified source nickname is not currently in use.");
+    }
+    user = this.server.users[nickname];
+    ident = user.ident;
+    if (Util.toLowercaseIRC(nickname) === Util.toLowerCase(this.nickname) && always_hash === false) {
       host = this.real_reverse;
     } else {
-      host = this.reverse;
+      host = user.reverse;
     }
     return "" + ident + "@" + host;
+  };
+
+  Client.prototype.getFullIdentity = function(nickname, always_hash) {
+    var identity;
+    if (always_hash == null) {
+      always_hash = false;
+    }
+    identity = this.getIdentity(nickname, always_hash);
+    return "" + nickname + "!" + identity;
+  };
+
+  Client.prototype.processNickChange = function(segments) {
+    var new_nickname, old_identity, old_nickname;
+    new_nickname = segments[1];
+    old_nickname = this.nickname;
+    old_identity = this.getFullIdentity(old_nickname, true);
+    if (nickname === this.nickname) {
+
+    } else if (Util.toLowercaseIRC(nickname) in this.server.users) {
+      return this.sendError(433, nickname, "Nickname is already in use.");
+    } else {
+      old_nickname = this.nickname;
+      this.nickname = nickname;
+      this.server.setUser(this.nickname, this);
+      this.server.deleteUser(old_nickname);
+      return this.sendCommand("NICK :" + nickname, old_identity);
+    }
   };
 
   Client.prototype.processUserhost = function(segments) {
@@ -328,6 +377,11 @@ net = require("net");
 
 Server = (function() {
   function Server() {
+    this.renameUser = __bind(this.renameUser, this);
+    this.deleteUser = __bind(this.deleteUser, this);
+    this.setUser = __bind(this.setUser, this);
+    this.getUser = __bind(this.getUser, this);
+    this.hasUser = __bind(this.hasUser, this);
     this.onError = __bind(this.onError, this);
     this.onConnected = __bind(this.onConnected, this);
     this.start = __bind(this.start, this);
@@ -394,6 +448,40 @@ Server = (function() {
     if (e.code === "EADDRINUSE") {
       return binding.socket.close();
     }
+  };
+
+  Server.prototype.hasUser = function(nickname) {
+    nickname = Util.toLowercaseIRC(nickname);
+    return nickname in this.users;
+  };
+
+  Server.prototype.getUser = function(nickname) {
+    var _ref;
+    nickname = Util.toLowercaseIRC(nickname);
+    return (_ref = this.users[nickname]) != null ? _ref : null;
+  };
+
+  Server.prototype.setUser = function(nickname, user) {
+    nickname = Util.toLowercaseIRC(nickname);
+    return this.users[nickname] = user;
+  };
+
+  Server.prototype.deleteUser = function(nickname) {
+    nickname = Util.toLowercaseIRC(nickname);
+    return delete this.users[nickname];
+  };
+
+  Server.prototype.renameUser = function(old_nickname, new_nickname) {
+    old_nickname = Util.toLowercaseIRC(old_nickname);
+    new_nickname = Util.toLowercaseIRC(new_nickname);
+    if (!this.hasUser(old_nickname)) {
+      throw new NicknameNotInUseException("The specified source nickname is not currently in use.");
+    }
+    if (this.hasUser(new_nickname)) {
+      throw new NicknameInUseException("The specified target nickname is in use by another user.");
+    }
+    this.users[new_nickname] = this.users[old_nickname];
+    return delete this.users[old_nickname];
   };
 
   return Server;
@@ -535,4 +623,34 @@ server = new Server();
 server.bind(null, 6667);
 
 server.start();
+
+var NicknameInUseException, NicknameNotInUseException,
+  __hasProp = {}.hasOwnProperty,
+  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; };
+
+NicknameInUseException = (function(_super) {
+  __extends(NicknameInUseException, _super);
+
+  function NicknameInUseException() {
+    return NicknameInUseException.__super__.constructor.apply(this, arguments);
+  }
+
+  NicknameInUseException.prototype.name = "NicknameInUse";
+
+  return NicknameInUseException;
+
+})(Error);
+
+NicknameNotInUseException = (function(_super) {
+  __extends(NicknameNotInUseException, _super);
+
+  function NicknameNotInUseException() {
+    return NicknameNotInUseException.__super__.constructor.apply(this, arguments);
+  }
+
+  NicknameNotInUseException.prototype.name = "NicknameNotInUse";
+
+  return NicknameNotInUseException;
+
+})(Error);
 ; })();

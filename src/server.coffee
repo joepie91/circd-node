@@ -39,3 +39,33 @@ class Server
 		if e.code == "EADDRINUSE"
 			binding.socket.close()
 			# FIXME: Log an error?
+			
+	hasUser: (nickname) =>
+		nickname = Util.toLowercaseIRC(nickname)
+		return nickname of @users
+			
+	getUser: (nickname) =>
+		nickname = Util.toLowercaseIRC(nickname)
+		return @users[nickname] ? null
+	
+	setUser: (nickname, user) =>
+		nickname = Util.toLowercaseIRC(nickname)
+		@users[nickname] = user
+		
+	deleteUser: (nickname) =>
+		nickname = Util.toLowercaseIRC(nickname)
+		delete @users[nickname]
+		
+	renameUser: (old_nickname, new_nickname) =>
+		old_nickname = Util.toLowercaseIRC(old_nickname)
+		new_nickname = Util.toLowercaseIRC(new_nickname)
+		
+		if not @hasUser(old_nickname)
+			throw new NicknameNotInUseException("The specified source nickname is not currently in use.")
+			
+		if @hasUser(new_nickname)
+			throw new NicknameInUseException("The specified target nickname is in use by another user.")
+		
+		@users[new_nickname] = @users[old_nickname]
+		delete @users[old_nickname]
+			

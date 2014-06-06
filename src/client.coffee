@@ -46,16 +46,16 @@ class Client
 		@onConnectionCompleted()
 		
 	onConnectionCompleted: =>
-		if Util.toLowercaseIRC(@nickname) of @server.users
+		if @server.hasUser(@nickname)
 			# Race condition occurred, abort.
 			return @abortConnection("Nickname is already in use.") # FIXME
-		@server.users[Util.toLowercaseIRC(@nickname)] = this
+		@server.setUser(@nickname, this)
 		@sendWelcome()
 		@sendMOTD()
 		
 	onDisconnected: (reason) =>
 		# FIXME: Broadcast disconnect
-		delete @server.users[Util.toLowercaseIRC(@nickname)]
+		@server.deleteUser(@nickname)
 		
 	onData: (data) =>
 		@buffer += data
@@ -80,7 +80,7 @@ class Client
 					if segments.length < 2
 						@sendError(461, "NICK", "Not enough parameters.")
 					else
-						if Util.toLowercaseIRC(segments[1]) of @server.users
+						if @server.hasUser(segments[1])
 							@sendError(433, segments[1], "Nickname already in use.")
 						else
 							@nickname = segments[1]
@@ -94,7 +94,10 @@ class Client
 				when "PONG"
 					null # Ignore
 				else
-					@sendError(451, segments[0], "You have not registered.")
+					if segments[0] of @process_map
+						@sendError(451, segments[0], "You have not registered.")
+					else
+						@sendError(421, segments[0], "Unknown command")
 		else if @status == ClientStatus.registered
 			if segments[0] == "PONG"
 				if segments.length < 2
@@ -140,6 +143,10 @@ class Client
 	sendRaw: (data) =>
 		@connection.write(data + "\r\n")
 		
+	sendCommand: (data, source = null) =>
+		source = source ? @server.host
+		@sendRaw(":#{source} #{data}")
+		
 	sendPing: (value) =>
 		@sendRaw("PING :#{value}")
 		
@@ -147,13 +154,13 @@ class Client
 		@sendRaw("PONG :#{value}")
 		
 	sendNumeric: (numeric, message) =>
-		@sendRaw(":#{@server.host} #{numeric} #{@nickname} #{message}")
+		@sendCommand("#{numeric} #{@nickname} #{message}")
 		
 	sendNumericNotice: (numeric, message) =>
 		@sendNumeric(numeric, ":#{message}")
 		
 	sendGlobalNotice: (message) =>
-		@sendRaw(":#{@server.host} NOTICE #{message}")
+		@sendCommand("NOTICE #{message}")
 		
 	sendError: (numeric, argument, message) =>
 		# `argument` is the faulty input that the error applies to. This can be a
@@ -183,17 +190,43 @@ class Client
 			@sendNumericNotice(376, "End of MOTD command")
 		else
 			@sendNumericNotice(422, "MOTD File is missing")
-				
+			
+	getIdentity: (nickname, always_hash = false) =>
+		if not @server.hasUser(nickname)
+			throw new NicknameNotInUseException("The specified source nickname is not currently in use.")
 		
-	getIdentity: (nickname) =>
-		ident = @ident # FIXME
+		user = @server.getUser(nickname)
+
+		ident = user.ident
+
+		if Util.toLowercaseIRC(nickname) == Util.toLowerCase(@nickname) and always_hash == false
+			host = @real_reverse # This way the real host can *never* leak, even if somebody messes with the identity check
+		else
+			host = user.reverse
+
+		return "#{ident}@#{host}"
+
+	getFullIdentity: (nickname, always_hash = false) =>
+		identity = @getIdentity(nickname, always_hash)
+		return "#{nickname}!#{identity}"
+	
+	processNickChange: (segments) =>
+		new_nickname = segments[1]
+		old_nickname = @nickname
+		old_identity = @getFullIdentity(old_nickname, true)
 		
 		if nickname == @nickname
-			host = @real_reverse
+			return
 		else
-			host = @reverse # FIXME
-			
-		return "#{ident}@#{host}"
+			try
+				@server.renameUser(old_nickname, new_nickname)
+			catch err
+				if err instanceof NicknameInUseException
+					return @sendError(433, nickname, "Nickname is already in use.")
+				if err instanceof NicknameNotInUseException
+					# FIXME: Log error, this is a bug!
+					
+		@sendCommand("NICK :#{nickname}", old_identity) # FIXME: Broadcast NICK change to all affected users! REQ: Channels
 	
 	processUserhost: (segments) =>
 		nicknames = segments.slice(1)
