@@ -224,7 +224,7 @@ class Client
 				if err instanceof NicknameInUseException
 					return @sendError(433, nickname, "Nickname is already in use.")
 				if err instanceof NicknameNotInUseException
-					# FIXME: Log error, this is a bug!
+					null # FIXME: Log error, this is a bug!
 					
 		@sendCommand("NICK :#{nickname}", old_identity) # FIXME: Broadcast NICK change to all affected users! REQ: Channels
 	

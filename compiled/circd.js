@@ -139,7 +139,7 @@ Client = (function() {
           if (segments.length < 2) {
             return this.sendError(461, "NICK", "Not enough parameters.");
           } else {
-            if (Util.toLowercaseIRC(segments[1]) in this.server.users) {
+            if (this.server.hasUser(segments[1])) {
               return this.sendError(433, segments[1], "Nickname already in use.");
             } else {
               this.nickname = segments[1];
@@ -301,10 +301,10 @@ Client = (function() {
     if (always_hash == null) {
       always_hash = false;
     }
-    if (!(nickname in this.server.users)) {
+    if (!this.server.hasUser(nickname)) {
       throw new NicknameNotInUseException("The specified source nickname is not currently in use.");
     }
-    user = this.server.users[nickname];
+    user = this.server.getUser(nickname);
     ident = user.ident;
     if (Util.toLowercaseIRC(nickname) === Util.toLowerCase(this.nickname) && always_hash === false) {
       host = this.real_reverse;
@@ -324,21 +324,26 @@ Client = (function() {
   };
 
   Client.prototype.processNickChange = function(segments) {
-    var new_nickname, old_identity, old_nickname;
+    var err, new_nickname, old_identity, old_nickname;
     new_nickname = segments[1];
     old_nickname = this.nickname;
     old_identity = this.getFullIdentity(old_nickname, true);
     if (nickname === this.nickname) {
-
-    } else if (Util.toLowercaseIRC(nickname) in this.server.users) {
-      return this.sendError(433, nickname, "Nickname is already in use.");
+      return;
     } else {
-      old_nickname = this.nickname;
-      this.nickname = nickname;
-      this.server.setUser(this.nickname, this);
-      this.server.deleteUser(old_nickname);
-      return this.sendCommand("NICK :" + nickname, old_identity);
+      try {
+        this.server.renameUser(old_nickname, new_nickname);
+      } catch (_error) {
+        err = _error;
+        if (err instanceof NicknameInUseException) {
+          return this.sendError(433, nickname, "Nickname is already in use.");
+        }
+        if (err instanceof NicknameNotInUseException) {
+          null;
+        }
+      }
     }
+    return this.sendCommand("NICK :" + nickname, old_identity);
   };
 
   Client.prototype.processUserhost = function(segments) {
