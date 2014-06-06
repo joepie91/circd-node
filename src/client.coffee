@@ -11,6 +11,8 @@ ClientStatus = {
 }
 
 class Client
+	regex_strip_carriage_return: /\r+$/
+		
 	constructor: (@server, @connection) ->
 		@status = ClientStatus.disconnected
 		@buffer = ""
@@ -46,13 +48,21 @@ class Client
 		@onConnectionCompleted()
 		
 	onConnectionCompleted: =>
+		if @nickname of @server.users
+			# Race condition occurred, abort.
+			return @abortConnection("Nickname is already in use.") # FIXME
+		@server.users[@nickname] = this
 		@sendWelcome()
+		
+	onDisconnected: (reason) =>
+		# FIXME: Broadcast disconnect
+		delete @server.users[@nickname]
 		
 	onData: (data) =>
 		@buffer += data
 		messages = @buffer.split("\n")
 		@buffer = messages.pop()
-		@onMessage(message) for message in messages
+		@onMessage(message.replace(@regex_strip_carriage_return, "")) for message in messages
 		
 	onMessage: (message) =>
 		segments = Util.parseMessage(message)
@@ -71,8 +81,11 @@ class Client
 					if segments.length < 2
 						@sendError(461, "NICK", "Not enough parameters.")
 					else
-						@nickname = segments[1]
-						@verifyRegistration()
+						if segments[1] of @server.users
+							@sendError(433, segments[1], "Nickname already in use.")
+						else
+							@nickname = segments[1]
+							@verifyRegistration()
 				when "PONG"
 					null # Ignore
 				else
@@ -117,7 +130,7 @@ class Client
 		return host # FIXME: Actually hash this value
 		
 	sendRaw: (data) =>
-		@connection.write(data + "\n")
+		@connection.write(data + "\r\n")
 		
 	sendPing: (value) =>
 		@sendRaw("PING :#{value}")

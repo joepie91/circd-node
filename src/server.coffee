@@ -4,6 +4,8 @@ class Server
 	constructor: () ->
 		@bindings = []
 		@clients = []
+		@users = {} # Contains all clients that have registered, indexed by nickname
+		@channels = {}
 		@host = "localhost" # FIXME
 		@network = "Cryto IRC" # FIXME
 		

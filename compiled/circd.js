@@ -1,4 +1,13 @@
-(function () {var Client, ClientStatus, crypto, dns, q,
+(function () {var Channel;
+
+Channel = (function() {
+  function Channel() {}
+
+  return Channel;
+
+})();
+
+var Client, ClientStatus, crypto, dns, q,
   __bind = function(fn, me){ return function(){ return fn.apply(me, arguments); }; };
 
 dns = require("dns");
@@ -16,6 +25,8 @@ ClientStatus = {
 };
 
 Client = (function() {
+  Client.prototype.regex_strip_carriage_return = /\r+$/;
+
   function Client(server, connection) {
     this.server = server;
     this.connection = connection;
@@ -36,6 +47,7 @@ Client = (function() {
     this.verifyRegistration = __bind(this.verifyRegistration, this);
     this.onMessage = __bind(this.onMessage, this);
     this.onData = __bind(this.onData, this);
+    this.onDisconnected = __bind(this.onDisconnected, this);
     this.onConnectionCompleted = __bind(this.onConnectionCompleted, this);
     this.onChallengeCompleted = __bind(this.onChallengeCompleted, this);
     this.onLookupError = __bind(this.onLookupError, this);
@@ -81,7 +93,15 @@ Client = (function() {
   };
 
   Client.prototype.onConnectionCompleted = function() {
+    if (this.nickname in this.server.users) {
+      return this.abortConnection("Nickname is already in use.");
+    }
+    this.server.users[this.nickname] = this;
     return this.sendWelcome();
+  };
+
+  Client.prototype.onDisconnected = function(reason) {
+    return delete this.server.users[this.nickname];
   };
 
   Client.prototype.onData = function(data) {
@@ -92,7 +112,7 @@ Client = (function() {
     _results = [];
     for (_i = 0, _len = messages.length; _i < _len; _i++) {
       message = messages[_i];
-      _results.push(this.onMessage(message));
+      _results.push(this.onMessage(message.replace(this.regex_strip_carriage_return, "")));
     }
     return _results;
   };
@@ -116,8 +136,12 @@ Client = (function() {
           if (segments.length < 2) {
             return this.sendError(461, "NICK", "Not enough parameters.");
           } else {
-            this.nickname = segments[1];
-            return this.verifyRegistration();
+            if (segments[1] in this.server.users) {
+              return this.sendError(433, segments[1], "Nickname already in use.");
+            } else {
+              this.nickname = segments[1];
+              return this.verifyRegistration();
+            }
           }
           break;
         case "PONG":
@@ -177,7 +201,7 @@ Client = (function() {
   };
 
   Client.prototype.sendRaw = function(data) {
-    return this.connection.write(data + "\n");
+    return this.connection.write(data + "\r\n");
   };
 
   Client.prototype.sendPing = function(value) {
@@ -265,40 +289,6 @@ Client = (function() {
 
 })();
 
-var Util;
-
-Util = {
-  parseMessage: function(message) {
-    var halves, segment, segments;
-    halves = Util.singleSplit(message, ":");
-    if (halves.length > 1) {
-      segments = halves[0].split(" ").concat([halves[1]]);
-    } else {
-      segments = halves[0].split(" ");
-    }
-    return (function() {
-      var _i, _len, _results;
-      _results = [];
-      for (_i = 0, _len = segments.length; _i < _len; _i++) {
-        segment = segments[_i];
-        if (segment.trim() !== "") {
-          _results.push(segment.trim());
-        }
-      }
-      return _results;
-    })();
-  },
-  singleSplit: function(string, separator) {
-    var index;
-    index = string.indexOf(separator);
-    if (index >= 0) {
-      return [string.slice(0, index), string.slice(index + 1)];
-    } else {
-      return [string];
-    }
-  }
-};
-
 var Server, net,
   __bind = function(fn, me){ return function(){ return fn.apply(me, arguments); }; };
 
@@ -312,6 +302,8 @@ Server = (function() {
     this.bind = __bind(this.bind, this);
     this.bindings = [];
     this.clients = [];
+    this.users = {};
+    this.channels = {};
     this.host = "localhost";
     this.network = "Cryto IRC";
   }
@@ -373,6 +365,120 @@ Server = (function() {
   return Server;
 
 })();
+
+var Util;
+
+Util = {
+  nickname_regex: /[a-zA-Z\[\]\\`_^{|}][a-zA-Z0-9\[\]\\`_^{|}-]*/,
+  parseMessage: function(message) {
+    var halves, segment, segments;
+    if (message.substring(0, 1) === ":") {
+      message = message.split(" ").slice(1).join(" ");
+    }
+    halves = Util.singleSplit(message, ":");
+    if (halves.length > 1) {
+      segments = halves[0].split(" ").concat([halves[1]]);
+    } else {
+      segments = halves[0].split(" ");
+    }
+    return (function() {
+      var _i, _len, _results;
+      _results = [];
+      for (_i = 0, _len = segments.length; _i < _len; _i++) {
+        segment = segments[_i];
+        if (segment.trim() !== "") {
+          _results.push(segment.trim());
+        }
+      }
+      return _results;
+    })();
+  },
+  singleSplit: function(string, separator) {
+    var index;
+    index = string.indexOf(separator);
+    if (index >= 0) {
+      return [string.slice(0, index), string.slice(index + 1)];
+    } else {
+      return [string];
+    }
+  },
+  splitChannelNames: function(names) {
+    return names.split(",");
+  },
+  isChannelName: function(name) {
+    var _ref;
+    return (_ref = name.substring(0, 1)) === "&" || _ref === "#" || _ref === "+" || _ref === "!";
+  },
+  isValidChannelName: function(name) {
+    var char, _i, _len, _ref;
+    _ref = [" ", ",", "\x00", "\x07", "\r", "\n"];
+    for (_i = 0, _len = _ref.length; _i < _len; _i++) {
+      char = _ref[_i];
+      if (name.indexOf(char) >= 0) {
+        return false;
+      }
+    }
+    return Util.isChannelName(name);
+  },
+  isValidNickname: function(name) {
+    return Util.nickname_regex.test(name);
+  },
+  toLowercaseIRC: function(string) {
+
+    /*
+    			http://tools.ietf.org/html/rfc2812#section-2.2
+    			
+    			"Because of IRC's Scandinavian origin, the characters {}|^ are
+    			 considered to be the lower case equivalents of the characters []\~,
+    			 respectively. This is a critical issue when determining the
+    			 equivalence of two nicknames or channel names."
+    			
+    			Yeah, don't ask me. I don't understand either.
+     */
+    return string.toLowercase().replace("[", "{").replace("]", "}").replace("\\", "|").replace("~", "^");
+  },
+  filterByMask: function(collection, mask, property) {
+    var escaped, item, re;
+    if (property == null) {
+      property = null;
+    }
+    escaped = Util.escapeCharacters(mask, ["\\", "^", "$", "{", "}", "[", "]", "(", ")", ".", "|", "+", "<", ">", "-", "&"]);
+    re = new RegExp(escaped.replace("*", ".*").replace("?", "."));
+    if (property != null) {
+      return ((function() {
+        var _i, _len, _results;
+        if (re.test(item[property])) {
+          _results = [];
+          for (_i = 0, _len = collection.length; _i < _len; _i++) {
+            item = collection[_i];
+            _results.push(item);
+          }
+          return _results;
+        }
+      })());
+    } else {
+      return ((function() {
+        var _i, _len, _results;
+        if (re.test(item)) {
+          _results = [];
+          for (_i = 0, _len = collection.length; _i < _len; _i++) {
+            item = collection[_i];
+            _results.push(item);
+          }
+          return _results;
+        }
+      })());
+    }
+  },
+  escapeCharacters: function(string, characters) {
+    var character, _i, _len;
+    for (_i = 0, _len = characters.length; _i < _len; _i++) {
+      character = characters[_i];
+      string = string.replace(character, "\#{character}");
+    }
+    return string;
+  }
+};
 
 var server;
 
