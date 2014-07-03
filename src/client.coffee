@@ -11,15 +11,21 @@ ClientStatus = {
 }
 
 class Client
+	# CURPOS
+	permitted_modes: ["i", "w", "r", "s", "x"] # x = mask host, default
+	permitted_demodes: ["i", "w", "o", "O", "s", "x"]
+	
 	constructor: (@server, @connection) ->
 		@status = ClientStatus.disconnected
 		@buffer = ""
+		@oper = null # CURPOS?
 		
 	initialize: =>
 		@process_map = {
 			"USERHOST": [1, @processUserhost]
 			"WHO": [1, @processWho]
 			"NICK": [1, @processNickChange]
+			"OPER": [2, @processOper]
 		}
 		
 		@connection.on("data", @onData)
@@ -261,4 +267,18 @@ class Client
 		query = segments[0]
 		modifiers = segments[1].split() ? []
 		
+	processOper: (segments) =>
+		username = segments[1]
+		password = segments[2]
 		
+		try
+			if @server.authenticateOper(@real_reverse, username, password)
+				@sendNumericNotice(381, "You are now an IRC operator.")
+				# FIXME: Send and set modes!
+		catch err
+			if err.name == "OperPasswordMismatch"
+				return @sendError(464, null, "Password incorrect.")
+			if err.name == "OperHostMismatch"
+				return @sendError(491, null, "No O-lines for your host.")
+			throw err
+			

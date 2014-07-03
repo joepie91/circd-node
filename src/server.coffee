@@ -2,6 +2,7 @@ net = require("net")
 
 class Server
 	constructor: () ->
+		# TODO: Add webirc configuration blocks
 		@bindings = []
 		@clients = []
 		@users = {} # Contains all clients that have registered, indexed by nickname
@@ -73,4 +74,6 @@ class Server
 		
 		@users[new_nickname] = @users[old_nickname]
 		delete @users[old_nickname]
-			
+	
+	authenticateOper: (hostname, username, password) =>
+		# TODO: @authenticateOper

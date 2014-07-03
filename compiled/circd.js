@@ -28,6 +28,7 @@ Client = (function() {
   function Client(server, connection) {
     this.server = server;
     this.connection = connection;
+    this.processOper = __bind(this.processOper, this);
     this.processWho = __bind(this.processWho, this);
     this.processUserhost = __bind(this.processUserhost, this);
     this.processNickChange = __bind(this.processNickChange, this);
@@ -59,13 +60,15 @@ Client = (function() {
     this.initialize = __bind(this.initialize, this);
     this.status = ClientStatus.disconnected;
     this.buffer = "";
+    this.oper = null;
   }
 
   Client.prototype.initialize = function() {
     this.process_map = {
       "USERHOST": [1, this.processUserhost],
       "WHO": [1, this.processWho],
-      "NICK": [1, this.processNickChange]
+      "NICK": [1, this.processNickChange],
+      "OPER": [2, this.processOper]
     };
     this.connection.on("data", this.onData);
     this.status = ClientStatus.lookingUp;
@@ -389,6 +392,26 @@ Client = (function() {
     return modifiers = (_ref = segments[1].split()) != null ? _ref : [];
   };
 
+  Client.prototype.processOper = function(segments) {
+    var err, password, username;
+    username = segments[1];
+    password = segments[2];
+    try {
+      if (this.server.authenticateOper(this.real_reverse, username, password)) {
+        return this.sendNumericNotice(381, "You are now an IRC operator.");
+      }
+    } catch (_error) {
+      err = _error;
+      if (err.name === "OperPasswordMismatch") {
+        return this.sendError(464, null, "Password incorrect.");
+      }
+      if (err.name === "OperHostMismatch") {
+        return this.sendError(491, null, "No O-lines for your host.");
+      }
+      throw err;
+    }
+  };
+
   return Client;
 
 })();
@@ -400,6 +423,7 @@ net = require("net");
 
 Server = (function() {
   function Server() {
+    this.authenticateOper = __bind(this.authenticateOper, this);
     this.renameUser = __bind(this.renameUser, this);
     this.deleteUser = __bind(this.deleteUser, this);
     this.setUser = __bind(this.setUser, this);
@@ -512,6 +536,8 @@ Server = (function() {
     this.users[new_nickname] = this.users[old_nickname];
     return delete this.users[old_nickname];
   };
+
+  Server.prototype.authenticateOper = function(hostname, username, password) {};
 
   return Server;
 
@@ -658,47 +684,4 @@ server = new Server();
 server.bind(null, 6667);
 
 server.start();
-
-var InvalidNicknameException, NicknameInUseException, NicknameNotInUseException,
-  __hasProp = {}.hasOwnProperty,
-  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; };
-
-NicknameInUseException = (function(_super) {
-  __extends(NicknameInUseException, _super);
-
-  function NicknameInUseException() {
-    return NicknameInUseException.__super__.constructor.apply(this, arguments);
-  }
-
-  NicknameInUseException.prototype.name = "NicknameInUse";
-
-  return NicknameInUseException;
-
-})(Error);
-
-NicknameNotInUseException = (function(_super) {
-  __extends(NicknameNotInUseException, _super);
-
-  function NicknameNotInUseException() {
-    return NicknameNotInUseException.__super__.constructor.apply(this, arguments);
-  }
-
-  NicknameNotInUseException.prototype.name = "NicknameNotInUse";
-
-  return NicknameNotInUseException;
-
-})(Error);
-
-InvalidNicknameException = (function(_super) {
-  __extends(InvalidNicknameException, _super);
-
-  function InvalidNicknameException() {
-    return InvalidNicknameException.__super__.constructor.apply(this, arguments);
-  }
-
-  InvalidNicknameException.prototype.name = "InvalidNickname";
-
-  return InvalidNicknameException;
-
-})(Error);
 ; })();
